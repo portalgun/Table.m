@@ -1,4 +1,7 @@
 classdef Table < handle & matlab.mixin.CustomDisplay
+%TODO complex cell prinitng
+% sum like operations
+%   using subassign language
 properties
 end
 properties(Access=private)
@@ -11,7 +14,13 @@ properties(Access=private,Constant)
 end
 methods
     function obj=Table(table,key);
+        if numel(key)~=size(table,2);
+            error('Key and table dimensions do not match');
+        end
         obj.KEY=key;
+        if ~iscell(table)
+            table=num2cell(table);
+        end
 
         M=size(table,2);
         obj.types=cell(1,M);
@@ -28,7 +37,7 @@ methods
         end
     end
     function sz=size(obj,dim)
-        sz=[numel(obj.TABLE) numel(obj.TABLE{1})];
+        sz=[numel(obj.TABLE{1}) numel(obj.TABLE)];
         if exist('dim','var') && ~isempty(dim)
             sz=sz(dim);
         end
@@ -74,43 +83,54 @@ methods
     function varargout=subsref(obj,s)
         switch s(1).type
         case '.'
-            [varargout{1:nargout}] = builtin('subsref',obj,s);
-            %if length(s) == 2 && strcmp(s(2).type,'()')
+            if ismethod(obj,s(1).subs)
+                str=['Table>Table.' s(1).subs];
+                n=nargout(str);
+            else
+                n=nargout;
+            end
+            [varargout{1:n}] = builtin('subsref',obj,s);
         case '()'
-            %if length(s) == 1
             out=obj.subsref_ind([s(1).subs]);
             if length(s) > 1
-                out=subsref(out,s(2:end));
+                [varargout{1:nargout}]=subsref(out,s(2:end));
+            else
+                varargout{1}=out;
             end
-            varargout{1}=out;
 
-            %elseif length(s) == 2 && strcmp(s(2).type,'.')
-            %    % Implement obj(ind).PropertyName
-            %    ...
-            %elseif length(s) == 3 && strcmp(s(2).type,'.') && strcmp(s(3).type,'()')
-            %    % Implement obj(indices).PropertyName(indices)
-            %    ...
-            %else
-            %    % Use built-in for any other expression
-            %    [varargout{1:nargout}] = builtin('subsref',obj,s);
-            %end
-        %case '{}'
-        %    if length(s) == 1
-        %        % Implement obj{indices}
-        %        ...
-        %    elseif length(s) == 2 && strcmp(s(2).type,'.')
-        %        % Implement obj{indices}.PropertyName
-        %        ...
-        %    else
-        %        % Use built-in for any other expression
-        %        [varargout{1:nargout}] = builtin('subsref',obj,s);
-        %    end
+        case '{}'
+            error('Not a valid indexing expression');
         otherwise
-            error('Not a valid indexing expression')
+            error('Not a valid indexing expression');
         end
     end
-    function t=subsref_ind(obj,subs)
-        keyInds=cellfun(@(x) ischar(x) && iskey(obj,x), subs);
+    function [C,ia,ic,counts]=unique(obj,varargin)
+        if length(varargin) > 0
+            o=obj.subsref_ind(varargin);
+            t=o.TABLE;
+        else
+            t=obj.TABLE;
+        end
+        counts=[];
+        [C,ia,ic]=cellfun(@unique,t,'UniformOutput',false);
+        if numel(C)==1
+            C=C{1};
+            ia=ia{1};
+            ic=ic{1};
+            counts=transpose(hist(ic,unique(ic)));
+        end
+
+    end
+    function ind=find(obj,varargin)
+        subs=varargin;
+        n=obj.get_n(subs);
+        [keys,keyProps]=obj.get_key_and_props(varargin);
+        m=obj.get_cols_ind(keys);
+        [limit,ind,bAll]=obj.get_limits(n,keys,keyProps);
+        ind=find(all([n ind],2)); % XXX
+
+    end
+    function n=get_n(obj,subs)
         indInds=logical(cumprod(cellfun(@(x) isnumeric(x), subs)));
         n=subs(indInds);
         n=horzcat(n{:});
@@ -121,8 +141,9 @@ methods
         else
             n=ismember(N,n);
         end
-
-
+    end
+    function [keys,keyProps]=get_key_and_props(obj,subs)
+        keyInds=cellfun(@(x) ischar(x) && iskey(obj,x), subs);
         keys=subs(keyInds);
         keyI=find(keyInds);
         keyProps=cell(1,length(keyI));
@@ -132,7 +153,27 @@ methods
         if ~isempty(keyI) && keyI(end) ~= length(subs)
             keyProps{end}=subs(keyI(end)+1:end);
         end
+    end
+    function t=subsref_ind(obj,subs)
+        n=obj.get_n(subs);
+        [keys,keyProps]=obj.get_key_and_props(subs);
 
+        [limit,ind,bAll]=obj.get_limits(n,keys,keyProps);
+
+        ind=all([n ind],2); % XXX
+
+        if bAll==0
+            table=cellfun(@(x) x(ind) ,obj.TABLE(limit),'UniformOutput',false);
+            key=obj.KEY(limit);
+        else
+            table=cellfun(@(x) x(ind) ,obj.TABLE,'UniformOutput',false);
+            key=obj.KEY;
+        end
+        t=Table(table,key);
+
+    end
+
+    function [limit,ind,bAll]=get_limits(obj,n,keys,keyProps)
         m=obj.get_cols_ind(keys);
         col=obj.TABLE(:,m);
 
@@ -145,13 +186,13 @@ methods
                 bAll=0;
                 limit=[limit m(i)];
                 continue
-            elseif isnumeric(kp{1}) || ~isemember(kp{1},{'==','>','<','>=','<=','~='})
+            elseif isnumeric(kp{1}) || ~ismember(kp{1},{'==','>','<','>=','<=','~='})
                 kp(2:end+1)=kp;
                 kp{1}='==';
             end
             if length(kp) < 2
                 kp(end+1)='|';
-            elseif isnumeric(kp{2})  || isemember(kp{2},{'|','&'})
+            elseif isnumeric(kp{2})  || ismember(kp{2},{'|','&'})
                 kp(3:end+1)=kp(2:end);
                 kp{2}='|';
             end
@@ -168,19 +209,10 @@ methods
                 STR=[STR strrep(str,'X',val)];
             end
             STR=[STR(1:end-3) ';'];
-            ind(:,i)=eval(STR);
+            ind(:,i)=eval(STR); % XXX
         end
-        ind=all([n ind],2);
-
-        if bAll==0
-            table=cellfun(@(x) x(ind) ,obj.TABLE(limit),'UniformOutput',false);
-            key=obj.KEY(limit);
-        else
-            table=cellfun(@(x) x(ind) ,obj.TABLE,'UniformOutput',false);
-            key=obj.KEY;
-        end
-        t=Table(table,key);
     end
+
     function m=get_cols_ind(obj,flds)
         if isempty(flds)
             m=1:size(obj,2);
@@ -218,9 +250,11 @@ methods(Access=protected)
         table=obj.TABLE;
         key=obj.KEY;
 
-        if sz(1) > 100
-            table=table(1:100,:);
-            rEnd=['...' newline];;
+        NPRINT=40;
+
+        if sz(1) > NPRINT
+            table=cellfun(@(x) x(1:NPRINT,:),table,'UniformOutput',false);
+            rEnd=[newline '    ...' newline];;
         else
             rEnd='';
         end
@@ -233,13 +267,20 @@ methods(Access=protected)
             cEnd='';
         end
 
-        [tableStr,w]=Table.cell2strTable(table,2,4);
+        kW=cellfun(@length,key);
+        [tableStr,w,wo]=Table.cell2strTable(table,2,4,kW);
         keyStr=cell(length(key),1);
+        wo(wo < 1)=0;
+        minSzs=max([kW; wo],[],1);
         for i = 1:length(key)
-            keyStr(i)=Table.space_fun(key(i),w(i)-1);
+            keyStr(i)=Table.space_fun(key(i),3,minSzs(i));
         end
+        %keyStr
+        %w
+        %kW
+        %dk
         keyStr=join(keyStr,'');
-        keyStr=[keyStr{1} rEnd];
+        keyStr=[keyStr{1} cEnd];
         div=['    ' repmat('_',1,length(keyStr)-1) newline];
         out=['    ' keyStr newline  div tableStr rEnd];
 
@@ -258,17 +299,28 @@ methods(Access=protected)
     end
 
 end
+methods(Hidden)
+    function KEY=get_key(obj)
+        KEY=obj.KEY;
+    end
+    function KEY=get_TABLE(obj)
+        TABLE=obj.TABLE;
+    end
+end
 methods(Static)
-    function [txt,w]=cell2strTable(C,nspace,indent)
+    function [txt,w,wo]=cell2strTable(C,nspace,indent,minSzs)
         %C={'bin','1','2'; 'val','1',''};
         %
         if ~exist('nspace','var') || isempty(nspace)
             nspace=2;
         end
-        nspace=nspace-1;
+        if ~exist('minSzs','var')
+            minSzs=[];
+        end
 
         txt=cell(size(C,1),1);
         col=zeros(1,size(C,1));
+        r=zeros(1,size(C,1));
         for i = 1:size(C,2)
             flds=C(:,i);
             ninds=cellfun(@isnumeric,flds);
@@ -289,9 +341,12 @@ methods(Static)
             else
                 n=nspace;
             end
-            [txt{i},col(i)]=Table.space_fun(flds,n);
+
+            [txt{i},col(i),wo(i)]=Table.space_fun(flds,n,minSzs(i));
         end
-        w=col+nspace;
+
+        w=col;
+
         txt=join(join([txt{:}],2),newline);
         txt=txt{1};
         if exist('indent','var') && ~isempty(indent) && indent~=0
@@ -300,10 +355,21 @@ methods(Static)
         end
 
     end
-    function [flds,col]=space_fun(flds,n)
-        col=max(cellfun(@(x) size(x,2), flds))+n;
+    function [flds,col,colO]=space_fun(flds,n,minSz)
+        col=max(cellfun(@(x) size(x,2), flds));
+        colO=col;
+        if ~exist('minSz','var') || isempty(minSz)
+            minSz=0;
+        end
+        n=n-1;
+        n(n<0)=0;
         for i = 1:length(flds)
-            space=repmat(' ',1,col-size(flds{i},2));
+            tmp=minSz-col;
+            if tmp > 0
+                col=tmp+col;
+            end
+
+            space=repmat(' ',1,n+col-size(flds{i},2));
             flds{i}=[flds{i} space];
         end
     end
