@@ -1,7 +1,4 @@
 classdef Table < handle & matlab.mixin.CustomDisplay
-%TODO complex cell prinitng
-% sum like operations
-%   using subassign language
 properties
 end
 properties(Access=private)
@@ -36,6 +33,12 @@ methods
             end
         end
     end
+    function out=length(obj)
+        out=obj.size(1);
+    end
+    function out=width(obj)
+        out=obj.size(2);
+    end
     function sz=size(obj,dim)
         sz=[numel(obj.TABLE{1}) numel(obj.TABLE)];
         if exist('dim','var') && ~isempty(dim)
@@ -65,13 +68,24 @@ methods
         end
 
     end
+    function S=struct(obj)
+        [table,key]=obj.ret();
+        S=struct();
+        for i = 1:length(key)
+            S.(key{i})=table(:,i);
+        end
+    end
     function [table,key]=ret(obj)
         table=obj.TABLE;
         key=obj.KEY;
 
-        if isuniform(obj.types)
+        if Set.isUniform(obj.types)
             table=horzcat(table{:});
         end
+    end
+    function out=isnotkey(obj,val)
+        %TODO expand this
+        out=~obj.iskey(val) && ~ismember('char',obj.types);
     end
     function out=iskey(obj,val)
         if isnumeric(val)
@@ -136,14 +150,21 @@ methods
         n=horzcat(n{:});
 
         N=transpose(1:size(obj,1));
+        bValid=ismember(n,N);
         if isempty(n)
             n=N;
-        else
+        elseif all(bValid)
             n=ismember(N,n);
+        else
+            error(['Invalid index/indeces ' num2str(unique(n(~bValid)))]);
         end
     end
     function [keys,keyProps]=get_key_and_props(obj,subs)
         keyInds=cellfun(@(x) ischar(x) && iskey(obj,x), subs);
+        notKey=subs(cellfun(@(x) ischar(x) && isnotkey(obj,x), subs));
+        if ~isempty(notKey)
+            error(['Invalid column names:' newline '        ' strjoin(notKey,', ') '.' ]);
+        end
         keys=subs(keyInds);
         keyI=find(keyInds);
         keyProps=cell(1,length(keyI));
@@ -157,7 +178,6 @@ methods
     function t=subsref_ind(obj,subs)
         n=obj.get_n(subs);
         [keys,keyProps]=obj.get_key_and_props(subs);
-
         [limit,ind,bAll]=obj.get_limits(n,keys,keyProps);
 
         ind=all([n ind],2); % XXX
@@ -200,6 +220,21 @@ methods
             bin=kp{2};
             str=['col{'  num2str(i) '} ' mod ' X ' bin ' '];
 
+            % funcitonality for array indexing
+            sz=obj.get_col_size(keys{i});
+            I=find(cellfun(@(x) isnumeric(x) && numel(x) > 1,kp));
+            if ~isempty(I)
+            for j=transpose(fliplr(I));
+                if ~isequal(size(kp{j}),sz) && j>1 && j < numel(kp);
+                    kp=[kp(1:j-1) num2cell(kp{j}) kp(j+1:end)];
+                elseif ~isequal(size(kp{j}),sz) && j>1
+                    kp=[kp(1:j-1) num2cell(kp{j})];
+                elseif ~isequal(size(kp{j}),sz) j < numel(kp);
+                    kp=[num2cell(kp{j}) kp(j+1:end)];
+                end
+            end
+            end
+
             STR='';
             for j = 3:length(kp)
                 val=kp{j};
@@ -211,6 +246,11 @@ methods
             STR=[STR(1:end-3) ';'];
             ind(:,i)=eval(STR); % XXX
         end
+    end
+    function sz=get_col_size(obj,key)
+        KI=ismember(obj.KEY,key);
+        sz=size(obj.TABLE{KI});
+        sz=sz(2:end);
     end
 
     function m=get_cols_ind(obj,flds)
@@ -295,7 +335,8 @@ methods(Access=protected)
         %     div];
     end
     function out=displayEmptyObject(obj)
-        out=[];
+        display([obj.getHeader() newline obj.getFooter()]);
+
     end
 
 end
@@ -326,13 +367,13 @@ methods(Static)
             ninds=cellfun(@isnumeric,flds);
             if all(ninds) && ~all(cellfun(@isempty,flds))
 
-                flds=cellfun(@num2strSane,flds,'UniformOutput',false);
+                flds=cellfun(@Num.toStr,flds,'UniformOutput',false);
                 flds=split(flds,newline);
             else
                 J=find(ninds);
                 for jj = 1:length(J)
                     j=J(jj);
-                    flds{j}=num2strSane(flds{j});
+                    flds{j}=Num.toStr(flds{j});
                 end
 
             end
