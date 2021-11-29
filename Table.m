@@ -228,8 +228,9 @@ methods
                 if ~isequal(size(kp{j}),sz) && j>1 && j < numel(kp);
                     kp=[kp(1:j-1) num2cell(kp{j}) kp(j+1:end)];
                 elseif ~isequal(size(kp{j}),sz) && j>1
-                    kp=[kp(1:j-1) num2cell(kp{j})];
+                    kp=[kp(1:j-1) Vec.row(num2cell(kp{j}))];
                 elseif ~isequal(size(kp{j}),sz) j < numel(kp);
+                    kp(j+1:end);
                     kp=[num2cell(kp{j}) kp(j+1:end)];
                 end
             end
@@ -365,6 +366,8 @@ methods(Static)
         for i = 1:size(C,2)
             flds=C(:,i);
             ninds=cellfun(@isnumeric,flds);
+            linds=cellfun(@islogical,flds);
+            oinds=cellfun(@isobject,flds) | cellfun(@iscell,flds);
             if all(ninds) && ~all(cellfun(@isempty,flds))
 
                 flds=cellfun(@Num.toStr,flds,'UniformOutput',false);
@@ -374,6 +377,25 @@ methods(Static)
                 for jj = 1:length(J)
                     j=J(jj);
                     flds{j}=Num.toStr(flds{j});
+                end
+                J=find(oinds);
+                for jj = 1:length(J)
+                    j=J(jj);
+                    sz=strrep(Num.toStr(size(flds{j})),',',char(215));
+                    flds{j}=[sz ' ' class(flds{j})];
+                end
+
+                J=find(linds);
+                for jj = 1:length(J)
+                    j=J(jj);
+                    if flds{i}
+                        str='true';
+                    else
+                        str=false;
+                    end
+                    sz=strrep(Num.toStr(size(flds{j})),',',char(215));
+                    flds{j}=strrep(Num.toStr(flds{j}),'1','true');
+                    flds{j}=strrep(flds{j},'0','false');
                 end
 
             end
